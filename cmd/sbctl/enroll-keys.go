@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/foxboron/go-uefi/efi/signature"
 	"github.com/foxboron/go-uefi/efi/util"
@@ -35,11 +34,30 @@ var (
 func KeySync(guid util.EFIGUID, keydir string, oems []string) error {
 	var sigdb *signature.SignatureDatabase
 
-	PKKey, _ := os.ReadFile(filepath.Join(keydir, "PK", "PK.key"))
-	PKPem, _ := os.ReadFile(filepath.Join(keydir, "PK", "PK.pem"))
-	KEKKey, _ := os.ReadFile(filepath.Join(keydir, "KEK", "KEK.key"))
-	KEKPem, _ := os.ReadFile(filepath.Join(keydir, "KEK", "KEK.pem"))
-	dbPem, _ := os.ReadFile(filepath.Join(keydir, "db", "db.pem"))
+	PKKey, err := os.ReadFile(filepath.Join(keydir, "PK", "PK.key"))
+	if err != nil {
+		return err
+	}
+
+	PKPem, err := os.ReadFile(filepath.Join(keydir, "PK", "PK.pem"))
+	if err != nil {
+		return err
+	}
+
+	KEKKey, err := os.ReadFile(filepath.Join(keydir, "KEK", "KEK.key"))
+	if err != nil {
+		return err
+	}
+
+	KEKPem, err := os.ReadFile(filepath.Join(keydir, "KEK", "KEK.pem"))
+	if err != nil {
+		return err
+	}
+
+	dbPem, err := os.ReadFile(filepath.Join(keydir, "db", "db.pem"))
+	if err != nil {
+		return err
+	}
 
 	sigdb = signature.NewSignatureDatabase()
 	sigdb.Append(signature.CERT_X509_GUID, guid, dbPem)
@@ -48,7 +66,7 @@ func KeySync(guid util.EFIGUID, keydir string, oems []string) error {
 		for _, oem := range oems {
 			switch oem {
 			case "tpm-eventlog":
-				logging.Print("\nWith cheksums from the TPM Eventlog...")
+				logging.Print("\nWith checksums from the TPM Eventlog...")
 				eventlogDB, err := sbctl.GetEventlogChecksums(systemEventlog)
 				if err != nil {
 					return fmt.Errorf("could not enroll db keys: %w", err)
@@ -58,7 +76,7 @@ func KeySync(guid util.EFIGUID, keydir string, oems []string) error {
 				}
 				sigdb.AppendDatabase(eventlogDB)
 			default:
-				logging.Print("\nWith vendor keys from %s...", strings.Title(oem))
+				logging.Print("\nWith vendor keys from %s...", oem)
 				oemSigDb, err := certs.GetCerts(oem)
 				if err != nil {
 					return fmt.Errorf("could not enroll db keys: %w", err)
@@ -98,7 +116,7 @@ func RunEnrollKeys(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
-	if !(enrollKeysCmdOptions.Force || enrollKeysCmdOptions.TPMEventlogChecksums || enrollKeysCmdOptions.MicrosoftKeys) {
+	if (!enrollKeysCmdOptions.Force && !enrollKeysCmdOptions.TPMEventlogChecksums && !enrollKeysCmdOptions.MicrosoftKeys) {
 		if err := sbctl.CheckEventlogOprom(systemEventlog); err != nil {
 			return err
 		}
