@@ -22,19 +22,24 @@ EFI signing commands
 
 **status**::
         Shows the current secure boot status of the system. It checks if you are
-        currently booted in UEFI with Secure Boot, and whether or not Setup Mode
+        currently booted in UEFI with Secure Boot, and whether Setup Mode
         has been enabled.
 
 **create-keys**::
-        Creates a set of signing keys used to sign EFI binaries. Currently it
+        Creates a set of signing keys used to sign EFI binaries. Currently, it
         will create the following keys:
         * Platform Key
-        * Key Exchange key
+        * Key Exchange Key
         * Signature Database Key
 
+        *-e*, *--export*;;
+                The directory to persist the exported keys.
+
+        *-d*, *--database-path*;;
+                Path to save the GUID file when generating keys.
+
 **enroll-keys**::
-        Enrolls the creates key into the EFI variables. This puts the computer
-        out of SetupMode and enables Secure Boot.
+        Enrolls the created key into the EFI variables.
 
         Note that some devices have hardware firmware that is signed and
         validated when Secure Boot is enabled. Failing to validate this firmware
@@ -44,18 +49,36 @@ EFI signing commands
         *-m*, *--microsoft*;;
                 Enroll UEFI vendor certificates from Microsoft into the
                 signature database.
+                +
                 See **Option ROM***.
 
         *-t*, *--tpm-eventlog*;;
                 Enroll checksums from the TPM Eventlog into the signature
                 database.
+                +
                 See **Option ROM***.
+                +
+                This feature is experimental
 
-                This feature is experimental.
+        *-c*, *--custom*;;
+                Enroll custom KEK and db certificates from "/var/lib/sbctl/keys/custom/KEK/",
+                "/var/lib/sbctl/keys/custom/db/",
+                respectively.
+
+        *-f*, *--firmware-builtin*;;
+                Enroll signatures from dbDefault, KEKDefault or PKDefault. This
+                is usefull if sbctl does not vendor your OEM certificates, or
+                doesn't include all of them.
+                +
+                Valid values are "db", "KEK" or "PK" passed as a comma
+                delimitered string.
+                +
+                Default: "db,KEK"
 
         *--yes-this-might-brick-my-machine*, **--yolo**;;
                 Ignore the Option ROM error and continue enrolling keys into the
                 UEFI firmware.
+                +
                 See **Option ROM***.
 
         *-i*, *--ignore-immutable*;;
@@ -63,8 +86,56 @@ EFI signing commands
                 files and unset the immutable attribute before enrolling
                 certificates.
 
+        *--export*;;
+                Export the keys we intend to enroll as EFI Signature Lists
+                (esl), or EFI Authenticated Variables (auth) into the current
+                working directory.
+                +
+                Valid values are: esl, auth.
+
+        *-p*, *--partial*;;
+                Enroll keys only for the hierarchy specified.
+                + 
+                Valid values are: db, KEK, PK.
+
+        *--custom-bytes*;;
+                Enroll a custom bytefile provided by its path to the efivar specified by partial. 
+
+        *-a*, *--append*;;
+                Instead of replacing the currently enrolled keys, append the provided one.
+
+        *--keytype*;;
+                Set the keytype for all signing keys used by sbctl. This
+                includes PK, KEK and db keys.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+                
+        *--pk-keytype*;;
+                Set the PK key type.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+
+        *--kek-keytype*;;
+                Set the KEK key type.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+
+        *--db-keytype*;;
+                Set the db key type.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+
+
 **sign** <FILE>...::
-        Signs a EFI binary with the created key. The file will be checked for
+        Signs an EFI binary with the created key. The file will be checked for
         valid signatures to avoid duplicates.
 
         *-o* 'PATH', *--output* 'PATH';;
@@ -95,7 +166,7 @@ EFI signing commands
         *--pk-key* 'PATH' ;;
                 Path to a valid Platform Key (PK) private key.
         *--directory* 'PATH' ;;
-                Path to a key directory. The expected file locations inside this directory is
+                Path to a key directory. The expected file locations inside this directory are:
                         * PK/PK.key
                         * PK/PK.pem
                         * KEK/KEK.key
@@ -111,14 +182,118 @@ EFI signing commands
 **remove-file** <FILE>, **rm-file** <FILE>, **rm** <FILE>::
         Removes the file from the signing database.
 
-**verify**::
+**list-enrolled-keys**, **ls-enrolled-keys**::
+        Lists all enrolled keys on the system.
+
+**verify** [FILE...]::
         Looks for EFI binaries with the mime type application/x-dosexec in the
         ESP partition, and looks at the file database. Checks if they have been
-        signed with the Signature Database Key.
+        signed with the Signature Database Key. Takes an optional file argument
+        to check specific files.
 
 **reset**::
         Resets the Platform Key. This sets the machine out of Secure Boot mode
-        and allows to rotate keys.
+        and allows key rotation.
+
+        *-p*, *--partial*;;
+               Reset keys only for the hierarchy specified.
+               + 
+               Valid values are: db, KEK, PK.
+
+**rotate-keys**::
+        Rotate the secure boot keys and replace them with newly generated keys.
+        Saves the old keys to a directory in /var/tmp and resigns any files from
+        the file database.
+
+        *--backup-dir* 'PATH';;
+                Choose backup directory for old keys.
+
+        *-p*, *--partial*;;
+               Rotate keys only for the hierarchy specified.
+               + 
+               Valid values are: db, KEK, PK.
+
+        *-k*, *--key-file*;;
+               Key file to be appended for the specified hierarchy.
+
+        *-c*, *--cert-file*;;
+               Certificate file to be appended for the specified hierarchy.
+
+        *--keytype*;;
+                Set the keytype for all signing keys used by sbctl. This
+                includes PK, KEK and db keys.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+                
+        *--pk-keytype*;;
+                Set the PK key type.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+
+        *--kek-keytype*;;
+                Set the KEK key type.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+
+        *--db-keytype*;;
+                Set the db key type.
+                +
+                Default: file 
+                +
+                Valid values are: file, tpm
+
+**export-enrolled-keys**::
+        Export already enrolled keys from the system.
+
+        *--dir* 'PATH';;
+                Output directory for the exported keys.
+
+        *--format* 'TYPE';;
+                Format of the exported keys.
+                +
+                Default: der
+                Valid values: esl, auth.
+
+**setup**::
+        Setup an sbctl installation.
+
+        This commands enables declarative configuration of sbctl through the
+        configuration file. It can also print the current configuration and the
+        current state of the installation.
+
+        *--setup*;;
+                Setup an sbctl install based off on the provided configuration
+                file, or the default read configuration from
+                /etc/sbctl/sbctl.conf.
+                +
+                This will automatically do the create-keys and enroll-keys
+                commands and also setup the files database for signing.
+                +
+                See linkman:sbctl.conf[5] for details.
+
+        *--migrate*;;
+                Migrate the configuration and setup of sbctl to a new iteration.
+                +
+                Currently the only migration for sbctl is moving from
+                /usr/share/secureboot to /var/lib/sbctl.
+
+        *--print-config*;;
+                Prints a serialized version of the current configuration of
+                sbctl.
+                +
+                See linkman:sbctl.conf[5] for details.
+
+        *--print-state*;;
+                Prints the state of the sbctl installation. Currently only
+                prints whether or not sbctl has been installed on the system.
+                +
+                Note: This option requires passing --json.
 
 **help**::
         Displays a help message.
@@ -147,13 +322,13 @@ EFI binary commands
                         Help for bundle.
 
                 *-f* 'PATH', *--initramfs* 'PATH';;
-                        Initramfs location. (default "/efi/initramfs-linux.img")
+                        Initramfs location. (default "/boot/initramfs-linux.img")
 
                 *-i* 'PATH', *--intelucode* 'PATH';;
                         Intel microcode location.
 
                 *-k* 'PATH', *--kernel-img* 'PATH';;
-                        Kernel image location. (default "/efi/vmlinuz-linux")
+                        Kernel image location. (default "/boot/vmlinuz-linux")
 
                 *-o* 'PATH', *--os-release* 'PATH';;
                         OS Release file location. (default "/usr/lib/os-release")
@@ -182,12 +357,28 @@ Options
 
 **-j**, **--json**::
         This enables supported commands to output their values in json instead
-        of human readable text. This is practical for parsing data with tools
+        of human-readable text. This is practical for parsing data with tools
         like `jq`.
+
+**-c**, **--config**::
+        An optionally provided path to the configuration file that should be
+        used by sbctl.
+        +
+        Default: /etc/sbctl/sbctl.conf
+
+**--disable-landlock**::
+        Disables landlock sandboxing in sbctl.
+        +
+        See linkman:landlock[7].
+
+**--debug**::
+        Enable verbose debug logging. This will break the pretty printed text.
 
 
 Bundles
 -------
+
+Note: This is being deprecated. Please move to dracut/mkinitcpio/ukify.
 
 Normally, only the kernel is signed with your secure boot keys. This means the
 kernel command line and initramfs can be changed without possibility of verification.
@@ -204,6 +395,38 @@ after each system update.
 Tip: systemd-boot will automatically show entries for any bundles found in
 *esp/EFI/Linux/+++*+++.efi*.
 
+Supported key types
+-------------------
+
+sbctl currently supports storing keys as plain unencrypted files, or as TPM
+shielded keys.
+
+Plain unencrypted files (*file*) should only be used when the root partition is
+encrypted. This is the default key type for historic reasons. File keys are
+hardcoded to RSA 4096.
+
+TPM shielded keys (*tpm*) are shielded inside the TPM and available if there is
+an accessible TPM on the system. TPM policies are not supported which means we
+can't seal keys towards the system state. Note that TPM keys are hardcoded to
+RSA 2048, which is usually the highest bit strength supported by TPMs.
+
+When creating a key hierarchy for Secure Boot, the user can decide which key
+type each of the keys in the hierarchy gets. Because TPMs can be slow to sign,
+it's generally adviced to keep PK and KEK in the TPM, while the db key can be a
+standard *file* key.
+
+Note that password protection is currently not supported.
+
+
+Landlock
+--------
+sbctl supports landlock and will attempt to restrict access to filepaths to
+where it's needed during execution. Any attempts at establishing network access
+is also restricted.
+
+This feature can be disabled by setting **landlock: false** in the configuration
+file, or by passing **--disable-landlock** to sbctl.
+
 
 Option ROM
 ----------
@@ -213,15 +436,18 @@ See https://github.com/Foxboron/sbctl/wiki/FAQ#option-rom
 Usage
 -----
 
-'Note': To use Secure Boot it's important to reboot the machine, navigate through the
-BIOS menu into the 'Secure Boot' options and enable "User Mode". Please also
-ensure you have reset the current platform keys. If this step is not completed
-the following step might not work depending on the firmware.
+'Note': To use custom Secure Boot keys it's important to reboot into firmware setup
+(`systemctl reboot --firmware-setup`) and navigate into the 'Secure Boot' menu to
+enter 'Setup Mode'. This is normally achieved by deleting/clearing the secure boot keys
+(or at a minimum the Platform Key) while leaving secure boot mode enabled. Some firmwares
+have a 'Custom Mode' which only disables signature verification and should therefore
+not be enabled unless no other way to enter key management is provided.
+If this step is not completed, enrolling custom keys will be rejected by the firmware.
 
 Next is creating the keys for secure boot. 'create-keys' creates the key
-hierarchy needed for secure boot into "/usr/share/secureboot".
+hierarchy needed for secure boot into "/var/lib/sbctl/keys".
 
-        $ sbctl create-keys
+        # sbctl create-keys
         Created Owner UUID a9fbbdb7-a05f-48d5-b63a-08c5df45ee70
         Creating secure boot keys...✔
         Secure boot keys created!
@@ -231,44 +457,47 @@ on a live system instead of having to boot or run a key management tool from the
 UEFI shell.
 
 'Note': This can fail because of firmware issues and unique options in the
-machine BIOS menu.
+machine BIOS menu. Also, some devices have hardware firmware that is signed and
+validated when Secure Boot is enabled. Failing to validate this firmware could
+brick devices. It's recommended to enroll your own keys with Microsoft
+certificates using the '-m' option. See **Option ROM*** above.
 
-        $ sbctl enroll-keys
+        # sbctl enroll-keys
         Enrolling keys to EFI variables...✔
         Enrolled keys to the EFI variables!
 
-After we have successfully enrolled the keys we need to sign our current
+After we have successfully enrolled the keys, we need to sign our current
 boot chain. Traditionally on UEFI systems one can have an EFI System Partition
 ('ESP') on '/efi', '/boot' or '/boot/efi'. One can usually find the correct one by
-looking at mount points or finding the 'EFI" directory on the ESP.
+looking at mount points or finding the 'EFI' directory on the ESP.
 
 The most important file to sign is the kernel. This location differs between
 distributions but can usually be found on the ESP or /boot. We use '--save' to
-store the file path so we don't need to manually sign it later.
+store the file path, so we don't need to manually sign it later.
 
 Note that *sbctl* can only keep track of file paths. On versioned kernels this
 might prove tricky.
 
-        $ sbctl sign --save /efi/vmlinuz-linux
+        # sbctl sign --save /efi/vmlinuz-linux
         ✔ Signed /efi/vmlinuz-linux
 
 Next is to sign the bootloader. This can usually be found on the standard path
 below, but might differ between installations.
 
-        $ sbctl sign --save /efi/EFI/BOOT/BOOTX64.EFI
+        # sbctl sign --save /efi/EFI/BOOT/BOOTX64.EFI
         ✔ Signed /efi/EFI/BOOT/BOOTX64.EFI
 
 *sbctl* is able to find and verify the ESP, along with any saved files to verify
 we have signed the files we need.
 
-        $ sbctl verify
+        # sbctl verify
         Verifying file database and EFI images in /efi...
         ✔ /efi/EFI/BOOT/BOOTX64.EFI is signed
         ✔ /efi/vmlinuz-linux is signed
 
-Once we have confirmed everything works, we can reboot. Remember to re enable
-Secure Boot in the BIOS menu. Once we have logged back inn we can very the state
-of the system.
+Once we have confirmed everything works, we can reboot. Once we have logged back
+in, we can verify the state of the system. There should be no need to re-enable
+Secure Boot or enter User Mode in the firmware.
 
         $ sbctl status
         Installed:  ✓ sbctl is installed
@@ -276,10 +505,10 @@ of the system.
         Setup Mode: ✓ Disabled
         Secure Boot:    ✓ Enabled
 
-When we do system updated we can run 'sign-all' to resign all the saved files
+When we do a system update, we can run 'sign-all' to resign all the saved files
 from earlier.
 
-        $ sbctl sign-all
+        # sbctl sign-all
         File has already been signed /boot/vmlinuz-linux
         ✓ Signed /efi/EFI/BOOT/BOOTX64.EFI
 
@@ -288,10 +517,10 @@ the initramfs, kernel and cmdline into one executable which can be signed for
 secure boot. This allows you to authenticate larger parts of the bootchain
 instead of only signing the kernel.
 
-        $ sbctl bundle -i /boot/intel-ucode.img
+        # sbctl bundle -i /boot/intel-ucode.img
                        -l /usr/share/systemd/bootctl/splash-arch.bmp
-                       -k /boot/vmlinuz-linux 
-                       -f /boot/initramfs-linux-lts.img 
+                       -k /boot/vmlinuz-linux
+                       -f /boot/initramfs-linux-lts.img
                        -c /etc/kernel/cmdline
                        /efi/EFI/Linux/linux-linux.efi
 
@@ -328,32 +557,47 @@ Environment variables
 
 Files
 ----
-**/usr/share/secureboot**::
+
+**/etc/sbctl/sbctl.conf**:;
+        Defautl configuration file.
+        See linkman:sbctl.conf[5]
+
+**/var/lib/sbctl**::
         Default storage directory.
 
-**/usr/share/secureboot/GUID**::
+**/var/lib/sbctl/GUID**::
         Owner identification. This is a randomly generated UUID.
 
-**/usr/share/secureboot/files.db**::
+**/var/lib/sbctl/files.db**::
         Contains a list of EFI binaries to be signed by the generated key.
 
-**/usr/share/secureboot/bundles.db**::
+**/var/lib/sbctl/bundles.db**::
         Contains a list of EFI bundles to be generated.
 
-**/usr/share/secureboot/keys/db/db.{pem,key}**::
+**/var/lib/sbctl/keys/db/db.{pem,key}**::
         Contains the Signature Database key used for signing EFI binaries.
 
-**/usr/share/secureboot/keys/KEK/KEK.{pem,key}**::
+**/var/lib/sbctl/keys/KEK/KEK.{pem,key}**::
         Contains the Key Exchange Key.
 
-**/usr/share/secureboot/keys/PK/PK.{pem,key}**::
+**/var/lib/sbctl/keys/PK/PK.{pem,key}**::
         Contains the Platform Key.
+
+**/var/lib/sbctl/keys/custom/KEK/***::
+        Contains custom certificates which will be added to the firmware as
+        additional Key Exchange Keys.
+
+**/var/lib/sbctl/keys/custom/db/***::
+        Contains custom certificates which will be added to the firmware
+        Signature Database.
 
 
 See Also
 --------
 linkman:bootctl[1]
 linkman:jq[1]
+linkman:sbctl.conf[5]
+linkman:landlock[7]
 
 Authors
 -------

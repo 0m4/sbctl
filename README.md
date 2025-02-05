@@ -8,7 +8,7 @@ needs to be signed in the boot chain.
 It is written top-to-bottom in [Golang](https://golang.org/) using
 [go-uefi](https://github.com/Foxboron/go-uefi) for the API layer and doesn't
 rely on existing secure boot tooling. It also tries to sport some integration
-testing towards towards [tianocore](https://www.tianocore.org/) utilizing
+testing towards [tianocore](https://www.tianocore.org/) utilizing
 [vmtest](https://github.com/anatol/vmtest).
 
 ![](https://pkgbuild.com/~foxboron/sbctl_demo.gif)
@@ -20,19 +20,74 @@ testing towards towards [tianocore](https://www.tianocore.org/) utilizing
 * Signing database to help keep track of files to sign
 * Verify ESP of files missing signatures
 * EFI stub generation
-* JSON Output
+* JSON output
 
 ## Roadmap to 1.0
 * Key rotation
-* TPM Support
-* Hardware Token support
+* TPM support
+* Hardware token support
 * Configuration Files
 * Automatic boot chain signing using the [Boot Loader Interface](https://systemd.io/BOOT_LOADER_INTERFACE/)
 
 ## Dependencies
 * util-linux (using `lsblk`)
 * binutils (using `objcopy`)
-* Go >= 1.16
+* Go >= 1.20
+* asciidoc (only for building)
+
+# Installation
+
+To fetch, build and install sbctl from the Github source:
+
+```
+$ go install github.com/foxboron/sbctl/cmd/sbctl@latest
+$ $(go env GOPATH)/bin/sbctl
+```
+
+To install through git:
+
+```
+$ git clone https://github.com/foxboron/sbctl.git
+$ cd sbctl
+$ make
+$ ./sbctl
+```
+
+### Available packages
+
+For Arch Linux:
+```
+# pacman -S sbctl
+```
+
+For Alpine Linux:
+```
+# apk add sbctl
+```
+
+For Gentoo Linux:
+```
+# emerge --ask app-crypt/sbctl
+```
+
+For openSUSE:
+```
+# zypper install sbctl
+```
+
+For Fedora Linux (unofficial package):
+```
+# dnf copr enable chenxiaolong/sbctl
+# dnf install sbctl
+```
+
+You can find a updated list of [sbctl packages on
+Repology](https://repology.org/project/sbctl/versions).
+
+In addition, sbctl is also available for [Ubuntu
+(unofficial)](https://software.opensuse.org/package/sbctl?search_term=sbctl).
+Follow the `Expert Download` links to find installation instructions according
+to your operating system.
 
 # Support and development channel
 
@@ -48,28 +103,40 @@ Usage:
   sbctl [command]
 
 Available Commands:
-  bundle           Bundle the needed files for an EFI stub image
-  create-keys      Create a set of secure boot signing keys
-  enroll-keys      Enroll the current keys to EFI
-  generate-bundles Generate all EFI stub bundles
-  help             Help about any command
-  list-bundles     List stored bundles
-  list-files       List enrolled files
-  remove-bundle    Remove bundle from database
-  remove-file      Remove file from database
-  sign             Sign a file with secure boot keys
-  sign-all         Sign all enrolled files with secure boot keys
-  status           Show current boot status
-  verify           Find and check if files in the ESP are signed or not
+  bundle               Bundle the needed files for an EFI stub image
+  create-keys          Create a set of secure boot signing keys
+  enroll-keys          Enroll the current keys to EFI
+  export-enrolled-keys Export already enrolled keys from the system
+  generate-bundles     Generate all EFI stub bundles
+  help                 Help about any command
+  import-keys          Import keys into sbctl
+  list-bundles         List stored bundles
+  list-enrolled-keys   List enrolled keys on the system
+  list-files           List enrolled files
+  remove-bundle        Remove bundle from database
+  remove-file          Remove file from database
+  reset                Reset Secure Boot Keys
+  rotate-keys          Rotate secure boot keys with new keys.
+  setup                Setup sbctl
+  sign                 Sign a file with secure boot keys
+  sign-all             Sign all enrolled files with secure boot keys
+  status               Show current boot status
+  verify               Find and check if files in the ESP are signed or not
 
 Flags:
-  -h, --help   help for sbctl
-      --json   Output as json
+      --config string      Path to configuration file
+      --debug              debug logging
+      --disable-landlock   disable landlock
+  -h, --help               help for sbctl
+      --json               Output as json
+      --quiet              Mute info from logging
 
 Use "sbctl [command] --help" for more information about a command.
 ```
 
 ## Key creation and enrollment
+See [example enrollment](docs/workflow-example.md) for a workflow with
+screenshots of real firmware setup menus.
 
 ```
 # sbctl status
@@ -92,7 +159,7 @@ Owner GUID:	a9fbbdb7-a05f-48d5-b63a-08c5df45ee70
 Setup Mode:	✔ Disabled
 Secure Boot:	✘ Disabled
 
-// Reboot!
+// Reboot and enable secure boot in the bios!
 # sbctl status
 Installed:	✔ Sbctl is installed
 Owner GUID:	a9fbbdb7-a05f-48d5-b63a-08c5df45ee70
@@ -158,7 +225,14 @@ Output File:	/usr/lib/fwupd/efi/fwupdx64.efi.signed
 Signed:		✔ Signed
 ```
 
-## Generate EFI Stub
+## Generate Unified Kernel Images (UKI)
+
+**Note:** It is generally recommended to use the initramfs generator for this.
+`mkinitcpio` and `dracut` support this through their respective `--uki` and
+`--uefi` flags, or the `ukify` tool from `systemd`.
+
+This feature is considered a second class citizen in `sbctl`.
+
 ```
 # sbctl bundle -s -i /boot/intel-ucode.img \
       -l /usr/share/systemd/bootctl/splash-arch.bmp \

@@ -2,8 +2,6 @@ package sbctl
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -11,22 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/foxboron/sbctl/fs"
 	"github.com/foxboron/sbctl/logging"
+	"github.com/spf13/afero"
 )
 
-func ChecksumFile(file string) (string, error) {
-	hasher := sha256.New()
-	s, err := os.ReadFile(file)
-	if err != nil {
-		return "", err
-	}
-	hasher.Write(s)
-
-	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-func CreateDirectory(path string) error {
-	_, err := os.Stat(path)
+func CreateDirectory(vfs afero.Fs, path string) error {
+	_, err := vfs.Stat(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		// Ignore this error
@@ -35,26 +24,26 @@ func CreateDirectory(path string) error {
 	case err != nil:
 		return err
 	}
-	if err := os.MkdirAll(path, os.ModePerm); err != nil {
+	if err := vfs.MkdirAll(path, os.ModePerm); err != nil {
 		return err
 	}
 	return nil
 }
 
-func ReadOrCreateFile(filePath string) ([]byte, error) {
+func ReadOrCreateFile(vfs afero.Fs, filePath string) ([]byte, error) {
 	// Try to access or create the file itself
-	f, err := os.ReadFile(filePath)
+	f, err := fs.ReadFile(vfs, filePath)
 	if err != nil {
 		// Errors will mainly happen due to permissions or non-existing file
 		if os.IsNotExist(err) {
 			// First, guarantee the directory's existence
 			// os.MkdirAll simply returns nil if the directory already exists
 			fileDir := filepath.Dir(filePath)
-			if err = os.MkdirAll(fileDir, os.ModePerm); err != nil {
+			if err = vfs.MkdirAll(fileDir, os.ModePerm); err != nil {
 				return nil, err
 			}
 
-			file, err := os.Create(filePath)
+			file, err := vfs.Create(filePath)
 			if err != nil {
 				return nil, err
 			}
@@ -82,8 +71,17 @@ var EfivarFSFiles = []string{
 var ErrImmutable = errors.New("file is immutable")
 var ErrNotImmutable = errors.New("file is not immutable")
 
+var Immutable = false
+
 // Check if a given file has the immutable bit set
-func IsImmutable(file string) error {
+func IsImmutable(vfs afero.Fs, file string) error {
+	// We can't actually do the syscall check. Implemented a workaround to test stuff instead
+	if _, ok := vfs.(afero.OsFs); ok {
+		if Immutable {
+			return ErrImmutable
+		}
+		return ErrNotImmutable
+	}
 	f, err := os.Open(file)
 	// Files in efivarfs might not exist. Ignore them
 	if errors.Is(err, os.ErrNotExist) {
@@ -91,6 +89,7 @@ func IsImmutable(file string) error {
 	} else if err != nil {
 		return err
 	}
+	defer f.Close()
 	attr, err := GetAttr(f)
 	if err != nil {
 		return err
@@ -102,10 +101,10 @@ func IsImmutable(file string) error {
 }
 
 // Check if any files in efivarfs has the immutable bit set
-func CheckImmutable() error {
+func CheckImmutable(vfs afero.Fs) error {
 	var isImmutable bool
 	for _, file := range EfivarFSFiles {
-		err := IsImmutable(file)
+		err := IsImmutable(vfs, file)
 		if errors.Is(err, ErrImmutable) {
 			isImmutable = true
 			logging.Warn("File is immutable: %s", file)
@@ -121,17 +120,11 @@ func CheckImmutable() error {
 	return nil
 }
 
-func CheckMSDos(path string) (bool, error) {
-	r, err := os.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer r.Close()
-
+func CheckMSDos(r io.Reader) (bool, error) {
 	// We are looking for MS-DOS executables.
 	// They contain "MZ" as the two first bytes
 	var header [2]byte
-	if _, err = io.ReadFull(r, header[:]); err != nil {
+	if _, err := io.ReadFull(r, header[:]); err != nil {
 		// File is smaller than 2 bytes
 		if errors.Is(err, io.EOF) {
 			return false, nil
@@ -160,26 +153,45 @@ func InChecked(path string) bool {
 	return checked[normalized]
 }
 
-func CopyFile(src, dst string) error {
-	source, err := os.Open(src)
+func CopyFile(vfs afero.Fs, src, dst string) error {
+	source, err := vfs.Open(src)
 	if err != nil {
 		return err
 	}
 	defer source.Close()
 
-	f, err := os.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	f, err := vfs.OpenFile(dst, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	io.Copy(f, source)
-	si, err := os.Stat(src)
+	if _, err = io.Copy(f, source); err != nil {
+		return err
+	}
+	si, err := vfs.Stat(src)
 	if err != nil {
 		return err
 	}
-	err = os.Chmod(dst, si.Mode())
-	if err != nil {
-		return err
-	}
-	return nil
+	return vfs.Chmod(dst, si.Mode())
+}
+
+// CopyDirectory moves files and creates directories
+func CopyDirectory(vfs afero.Fs, src, dst string) error {
+	return afero.Walk(vfs, src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath := strings.TrimPrefix(path, src)
+		newPath := filepath.Join(dst, relPath)
+		if info.IsDir() {
+			if err := vfs.MkdirAll(newPath, info.Mode()); err != nil {
+				return err
+			}
+			return nil
+		}
+		if err := CopyFile(vfs, path, newPath); err != nil {
+			return err
+		}
+		return nil
+	})
 }

@@ -1,13 +1,17 @@
 package sbctl
 
 import (
+	"debug/pe"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
+
+	"github.com/foxboron/sbctl/config"
+	"github.com/foxboron/sbctl/fs"
+	"github.com/spf13/afero"
 )
 
 type Bundle struct {
@@ -25,32 +29,35 @@ type Bundle struct {
 
 type Bundles map[string]*Bundle
 
-var BundleDBPath = filepath.Join(DatabasePath, "bundles.db")
-
-func ReadBundleDatabase(dbpath string) (Bundles, error) {
-	f, err := ReadOrCreateFile(dbpath)
+func ReadBundleDatabase(vfs afero.Fs, dbpath string) (Bundles, error) {
+	f, err := ReadOrCreateFile(vfs, dbpath)
 	if err != nil {
 		return nil, err
 	}
 	bundles := make(Bundles)
-	json.Unmarshal(f, &bundles)
+	if len(f) == 0 {
+		return bundles, nil
+	}
+	if err = json.Unmarshal(f, &bundles); err != nil {
+		return nil, fmt.Errorf("failed to parse json: %v", err)
+	}
 	return bundles, nil
 }
 
-func WriteBundleDatabase(dbpath string, bundles Bundles) error {
+func WriteBundleDatabase(vfs afero.Fs, dbpath string, bundles Bundles) error {
 	data, err := json.MarshalIndent(bundles, "", "    ")
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(dbpath, data, 0644)
+	err = fs.WriteFile(vfs, dbpath, data, 0644)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func BundleIter(fn func(s *Bundle) error) error {
-	files, err := ReadBundleDatabase(BundleDBPath)
+func BundleIter(state *config.State, fn func(s *Bundle) error) error {
+	files, err := ReadBundleDatabase(state.Fs, state.Config.BundlesDb)
 	if err != nil {
 		return err
 	}
@@ -75,7 +82,7 @@ func efiStubArch() (string, error) {
 	return "", fmt.Errorf("unsupported architecture")
 }
 
-func GetEfistub() (string, error) {
+func GetEfistub(vfs afero.Fs) (string, error) {
 	candidatePaths := []string{
 		"/lib/systemd/boot/efi/",
 		"/lib/gummiboot/",
@@ -86,22 +93,23 @@ func GetEfistub() (string, error) {
 	}
 
 	for _, f := range candidatePaths {
-		if _, err := os.Stat(f + stubName); err == nil {
+		if _, err := vfs.Stat(f + stubName); err == nil {
 			return f + stubName, nil
 		}
 	}
-	return "", fmt.Errorf("no EFI stub found")
+	return "", nil
 }
 
-func NewBundle() (bundle *Bundle, err error) {
-	esp, err := GetESP()
+func NewBundle(vfs afero.Fs) (bundle *Bundle, err error) {
+	esp, err := GetESP(vfs)
 	if err != nil {
-		return
+		// This is not critical, just use an empty default.
+		esp = ""
 	}
 
-	stub, err := GetEfistub()
+	stub, err := GetEfistub(vfs)
 	if err != nil {
-		return nil, fmt.Errorf("no EFISTUB file found. Please install systemd-boot or gummiboot! %v", err)
+		return nil, fmt.Errorf("failed to get default EFI stub location: %v", err)
 	}
 
 	bundle = &Bundle{
@@ -120,16 +128,68 @@ func NewBundle() (bundle *Bundle, err error) {
 	return
 }
 
-func GenerateBundle(bundle *Bundle) (bool, error) {
-	args := []string{
-		"--add-section", fmt.Sprintf(".osrel=%s", bundle.OSRelease), "--change-section-vma", ".osrel=0x20000",
-		"--add-section", fmt.Sprintf(".cmdline=%s", bundle.Cmdline), "--change-section-vma", ".cmdline=0x30000",
-		"--add-section", fmt.Sprintf(".linux=%s", bundle.KernelImage), "--change-section-vma", ".linux=0x2000000",
-		"--add-section", fmt.Sprintf(".initrd=%s", bundle.Initramfs), "--change-section-vma", ".initrd=0x3000000",
+// Reference ukify from systemd:
+// https://github.com/systemd/systemd/blob/d09df6b94e0c4924ea7064c79ab0441f5aff469b/src/ukify/ukify.py
+
+func GenerateBundle(vfs afero.Fs, bundle *Bundle) (bool, error) {
+	type section struct {
+		section string
+		file    string
+	}
+	sections := []section{
+		{".osrel", bundle.OSRelease},
+		{".cmdline", bundle.Cmdline},
+		{".splash", bundle.Splash},
+		{".initrd", bundle.Initramfs},
+		{".linux", bundle.KernelImage},
 	}
 
-	if bundle.Splash != "" {
-		args = append(args, "--add-section", fmt.Sprintf(".splash=%s", bundle.Splash), "--change-section-vma", ".splash=0x40000")
+	if bundle.EFIStub == "" {
+		return false, fmt.Errorf("could not find EFI stub binary, please install systemd-boot or provide --efi-stub on the command line")
+	}
+
+	e, err := pe.Open(bundle.EFIStub)
+	if err != nil {
+		return false, err
+	}
+	e.Close()
+	s := e.Sections[len(e.Sections)-1]
+
+	vma := uint64(s.VirtualAddress) + uint64(s.VirtualSize)
+	switch e := e.OptionalHeader.(type) {
+	case *pe.OptionalHeader32:
+		vma += uint64(e.ImageBase)
+	case *pe.OptionalHeader64:
+		vma += e.ImageBase
+	}
+	vma = roundUpToBlockSize(vma)
+
+	var args []string
+	for _, s := range sections {
+		if s.file == "" {
+			// optional sections
+			switch s.section {
+			case ".splash":
+				continue
+			}
+		}
+		fi, err := vfs.Stat(s.file)
+		if err != nil || fi.IsDir() {
+			return false, err
+		}
+		var flags string
+		switch s.section {
+		case ".linux":
+			flags = "code,readonly"
+		default:
+			flags = "data,readonly"
+		}
+		args = append(args,
+			"--add-section", fmt.Sprintf("%s=%s", s.section, s.file),
+			"--set-section-flags", fmt.Sprintf("%s=%s", s.section, flags),
+			"--change-section-vma", fmt.Sprintf("%s=%#x", s.section, vma),
+		)
+		vma += roundUpToBlockSize(uint64(fi.Size()))
 	}
 
 	args = append(args, bundle.EFIStub, bundle.Output)
@@ -145,4 +205,9 @@ func GenerateBundle(bundle *Bundle) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func roundUpToBlockSize(size uint64) uint64 {
+	const blockSize = 4096
+	return ((size + blockSize - 1) / blockSize) * blockSize
 }

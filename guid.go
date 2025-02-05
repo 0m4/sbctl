@@ -2,9 +2,10 @@ package sbctl
 
 import (
 	"os"
-	"path/filepath"
 
+	"github.com/foxboron/sbctl/fs"
 	"github.com/google/uuid"
+	"github.com/spf13/afero"
 )
 
 func CreateUUID() []byte {
@@ -12,32 +13,19 @@ func CreateUUID() []byte {
 	return []byte(id.String())
 }
 
-func CreateGUID(output string) ([]byte, error) {
+func CreateGUID(vfs afero.Fs, guidPath string) ([]byte, error) {
 	var uuid []byte
-	guidPath := filepath.Join(output, "GUID")
-	if _, err := os.Stat(guidPath); os.IsNotExist(err) {
+	if _, err := vfs.Stat(guidPath); os.IsNotExist(err) {
 		uuid = CreateUUID()
-		err := os.WriteFile(guidPath, uuid, 0644)
+		err := fs.WriteFile(vfs, guidPath, uuid, 0644)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		uuid, err = os.ReadFile(guidPath)
+		uuid, err = fs.ReadFile(vfs, guidPath)
 		if err != nil {
 			return nil, err
 		}
 	}
 	return uuid, nil
-}
-
-func GetGUID() (uuid.UUID, error) {
-	b, err := os.ReadFile(GUIDPath)
-	if err != nil {
-		return [16]byte{}, err
-	}
-	u, err := uuid.ParseBytes(b)
-	if err != nil {
-		return [16]byte{}, err
-	}
-	return u, err
 }

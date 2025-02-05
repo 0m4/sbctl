@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	"github.com/foxboron/sbctl"
+	"github.com/foxboron/sbctl/backend"
+	"github.com/foxboron/sbctl/config"
+	"github.com/foxboron/sbctl/hierarchy"
 	"github.com/foxboron/sbctl/logging"
 	"github.com/spf13/cobra"
 )
@@ -21,11 +24,25 @@ var listBundlesCmd = &cobra.Command{
 	},
 	Short: "List stored bundles",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		state := cmd.Context().Value(stateDataKey{}).(*config.State)
+
+		logging.Errorf("The bundle/uki support in sbctl is deprecated. Please move to dracut/mkinitcpio/ukify.")
+
+		// if state.Config.Landlock {
+		// 	if err := lsm.Restrict(); err != nil {
+		// 		return err
+		// 	}
+		// }
+
 		bundles := []JsonBundle{}
 		var isSigned bool
-		err := sbctl.BundleIter(
+		err := sbctl.BundleIter(state,
 			func(s *sbctl.Bundle) error {
-				ok, err := sbctl.VerifyFile(sbctl.DBCert, s.Output)
+				kh, err := backend.GetKeyHierarchy(state.Fs, state)
+				if err != nil {
+					return err
+				}
+				ok, err := sbctl.VerifyFile(state, kh, hierarchy.Db, s.Output)
 				if err != nil {
 					logging.Error(fmt.Errorf("%s: %w", s.Output, err))
 					logging.Error(fmt.Errorf(""))
@@ -41,7 +58,7 @@ var listBundlesCmd = &cobra.Command{
 					isSigned = false
 					logging.NotOk("Not Signed")
 				}
-				esp, err := sbctl.GetESP()
+				esp, err := sbctl.GetESP(state.Fs)
 				if err != nil {
 					return err
 				}
@@ -69,7 +86,7 @@ var listBundlesCmd = &cobra.Command{
 			return err
 		}
 		if cmdOptions.JsonOutput {
-			JsonOut(bundles)
+			return JsonOut(bundles)
 		}
 		return nil
 	},

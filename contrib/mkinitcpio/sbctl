@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+
+KERNEL_FILE="$1"
+UKI_FILE="$3"
+
+if ! [ "$(sbctl setup --print-state --json | awk '/installed/ { gsub(/,$/,"",$2); print $2 }')" = "true" ]; then
+    echo "Secureboot key directory doesn't exist, not signing!"
+    exit 0
+fi
+
+IMAGE_FILE="$KERNEL_FILE"
+if [ -n "$KERNELDESTINATION" ] && [ -f "$KERNELDESTINATION" ]; then
+    IMAGE_FILE="$KERNELDESTINATION"
+fi
+if [ -n "$UKI_FILE" ]; then
+    IMAGE_FILE="$UKI_FILE"
+fi
+
+if [ -z "$IMAGE_FILE" ]; then
+    echo "No kernel or UKI found for signing"
+    exit 0
+fi
+
+echo "Signing $IMAGE_FILE"
+sbctl sign "$IMAGE_FILE"

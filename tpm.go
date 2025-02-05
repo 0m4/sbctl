@@ -6,7 +6,9 @@ import (
 
 	"github.com/foxboron/go-uefi/efi/signature"
 	"github.com/foxboron/go-uefi/efi/util"
+	"github.com/foxboron/sbctl/fs"
 	"github.com/google/go-attestation/attest"
+	"github.com/spf13/afero"
 )
 
 var (
@@ -18,14 +20,14 @@ var (
 	eventlogGUID = *util.StringToGUID("4f52704f-494d-41736e-6e6f79696e6721")
 )
 
-func GetEventlogEvents(eventlog string) ([]attest.Event, error) {
-	if _, err := os.Stat(eventlog); err != nil {
+func GetEventlogEvents(vfs afero.Fs, eventlog string) ([]attest.Event, error) {
+	if _, err := vfs.Stat(eventlog); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, ErrNoEventlog
 		}
 		return nil, err
 	}
-	b, err := os.ReadFile(eventlog)
+	b, err := fs.ReadFile(vfs, eventlog)
 	if err != nil {
 		return nil, err
 	}
@@ -37,8 +39,8 @@ func GetEventlogEvents(eventlog string) ([]attest.Event, error) {
 	return log.Events(attest.HashSHA256), nil
 }
 
-func CheckEventlogOprom(eventlog string) error {
-	events, err := GetEventlogEvents(eventlog)
+func CheckEventlogOprom(vfs afero.Fs, eventlog string) error {
+	events, err := GetEventlogEvents(vfs, eventlog)
 	if err != nil {
 		return err
 	}
@@ -51,8 +53,8 @@ func CheckEventlogOprom(eventlog string) error {
 	return nil
 }
 
-func GetEventlogChecksums(eventlog string) (*signature.SignatureDatabase, error) {
-	events, err := GetEventlogEvents(eventlog)
+func GetEventlogChecksums(vfs afero.Fs, eventlog string) (*signature.SignatureDatabase, error) {
+	events, err := GetEventlogEvents(vfs, eventlog)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +62,12 @@ func GetEventlogChecksums(eventlog string) (*signature.SignatureDatabase, error)
 	for _, event := range events {
 		switch event.Type.String() {
 		case "EV_EFI_BOOT_SERVICES_DRIVER":
-			sigdb.Append(signature.CERT_SHA256_GUID, eventlogGUID, event.Digest)
+			if sigdb.BytesExists(signature.CERT_SHA256_GUID, eventlogGUID, event.Digest) {
+				continue
+			}
+			if err = sigdb.Append(signature.CERT_SHA256_GUID, eventlogGUID, event.Digest); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return sigdb, nil

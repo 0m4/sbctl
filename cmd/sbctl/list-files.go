@@ -4,7 +4,11 @@ import (
 	"fmt"
 
 	"github.com/foxboron/sbctl"
+	"github.com/foxboron/sbctl/backend"
+	"github.com/foxboron/sbctl/config"
+	"github.com/foxboron/sbctl/hierarchy"
 	"github.com/foxboron/sbctl/logging"
+	"github.com/foxboron/sbctl/lsm"
 	"github.com/spf13/cobra"
 )
 
@@ -23,12 +27,27 @@ type JsonFile struct {
 	IsSigned bool `json:"is_signed"`
 }
 
-func RunList(_ *cobra.Command, args []string) error {
+func RunList(cmd *cobra.Command, args []string) error {
+	state := cmd.Context().Value(stateDataKey{}).(*config.State)
+
+	if state.Config.Landlock {
+		if err := sbctl.LandlockFromFileDatabase(state); err != nil {
+			return err
+		}
+		if err := lsm.Restrict(); err != nil {
+			return err
+		}
+	}
+
 	files := []JsonFile{}
 	var isSigned bool
-	err := sbctl.SigningEntryIter(
+	err := sbctl.SigningEntryIter(state,
 		func(s *sbctl.SigningEntry) error {
-			ok, err := sbctl.VerifyFile(sbctl.DBCert, s.OutputFile)
+			kh, err := backend.GetKeyHierarchy(state.Fs, state)
+			if err != nil {
+				return err
+			}
+			ok, err := sbctl.VerifyFile(state, kh, hierarchy.Db, s.OutputFile)
 			if err != nil {
 				logging.Error(fmt.Errorf("%s: %w", s.OutputFile, err))
 				logging.Error(fmt.Errorf(""))
@@ -55,7 +74,7 @@ func RunList(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if cmdOptions.JsonOutput {
-		JsonOut(files)
+		return JsonOut(files)
 	}
 	return nil
 }
